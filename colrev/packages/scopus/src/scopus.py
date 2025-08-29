@@ -1,7 +1,5 @@
 """SearchSource: Scopus"""
 from __future__ import annotations
-
-import json
 import logging
 import os
 from pathlib import Path
@@ -52,8 +50,6 @@ class ScopusSearchSource(base_classes.SearchSourcePackageBaseClass):
             url = "https://api.elsevier.com/content/search/scopus"
             params = {
                 "query": query,
-                # The response.text showed that the count was too high.
-                # To retrieve all results, you might need to paginate (using 'start' and 'count').
                 "count": 10,
                 "start": 0,
                 "apiKey": api_key,
@@ -67,25 +63,20 @@ class ScopusSearchSource(base_classes.SearchSourcePackageBaseClass):
                 entries = data.get("search-results", {}).get("entry", [])
                 self.review_manager.logger.info(f"Found {len(entries)} results via API")
 
-                output_json_path = Path(
-                    self.search_source.search_parameters.get(
-                        "output_json", "scopus_results.json"
-                    )
-                )
                 output_bib_path = Path(
                     self.search_source.search_parameters.get(
                         "output_bib", "scopus_results.bib"
                     )
                 )
 
-                self._save_simple_results(entries, output_json_path, output_bib_path)
+                self._save_simple_results(entries, output_bib_path)
             else:
                 self.review_manager.logger.info(f"API Error: {response.status_code}")
         except Exception as e:
             self.review_manager.logger.info(f"API search error: {str(e)}")
 
     def _save_simple_results(
-        self, entries: list, json_path: Path, bib_path: Path
+        self, entries: list, bib_path: Path
     ) -> None:
         results = []
 
@@ -104,10 +95,6 @@ class ScopusSearchSource(base_classes.SearchSourcePackageBaseClass):
                 "ENTRYTYPE": "article",
             }
             results.append(record)
-
-        with open(json_path, "w" , encoding= "utf-8") as f_json:
-            json.dump(results, f_json, indent=2)
-        self.review_manager.logger.info(f"Results saved to {json_path}")
 
         self._convert_to_bib(results, bib_path)
 
@@ -149,23 +136,32 @@ class ScopusSearchSource(base_classes.SearchSourcePackageBaseClass):
         operation: colrev.ops.search.Search,
         params: str,
     ) -> colrev.settings.SearchSource:
-        """Add SearchSource as an endpoint (based on query provided to colrev search --add )"""
 
-        params_dict = {params.split("=")[0]: params.split("=")[1]}
-
-        search_source = operation.create_db_source(
-            search_source_cls=cls,
-            params=params_dict,
+        params_dict = {}
+        search_type = operation.select_search_type (
+            search_types=cls.search_types, params=params_dict
         )
+
+        if search_type == SearchType.API:
+            search_source = operation.create_api_source(endpoint=cls.endpoint)
+
+        elif search_type == SearchType.DB:
+            search_source = operation.create_db_source(
+                search_source_cls=cls,
+                params={},
+            )
+
         operation.add_source_and_search(search_source)
         return search_source
 
     def search(self, rerun: bool) -> None:
         query = self.search_source.search_parameters.get("query", "")
-        # TODO : make sure the query variable is set correctly (based on the search source settings)
 
-        if query and self.search_source.search_type == SearchType.API:
-            self.review_manager.logger.info("Attempting API search...")
+        if not query:
+            raise ValueError("No query provided. Use --query when adding source.")
+
+        if self.search_source.search_type == SearchType.API:
+            self.review_manager.logger.info(f"Running Scopus API search with: {query}")
             self._simple_api_search(query)
             return
 
